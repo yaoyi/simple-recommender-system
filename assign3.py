@@ -63,37 +63,88 @@ def convertScale(rating):
 
 
 def loadDataset(path=""):
-    """ To load the dataSet"
-        Parameter: The folder where the data files are stored
-        Return: the dictionary with the data
-    """
-    #Recover the titles of the books
     books = []
     for line in open(path+"books_list.txt"):
         line  = line.strip('\n').strip()
         books.append(line)
     #Load the data
+    testPrefs = {}
     prefs = {}
-    count = 0
-    odd = 1
+    users = []
+    
+    index = 1
+    userid = 0
     for line in open(path+"books_ratings.txt"):
         line  = line.strip('\n').strip()
-
-        if odd == 1:
-            user = line
-            odd = 0
+        if index % 2 == 1:
+            users.append(line)
+            index += 1
             continue 
         ratings = line.split(" ")
-        new_ratings = {}
+        testRatings = {}
+        allRatings = {}
+        count = 0
         bookid = 0
+        valid = 0
         for rating in ratings:
-            new_ratings[books[bookid]] = convertScale(rating)
+            if rating != '0' and count < 2:
+                testRatings[bookid] = convertScale(rating)
+                allRatings[bookid] = convertScale(rating)
+                count += 1
+            else:
+                if rating != '0':
+                    valid = 1
+                allRatings[bookid] = convertScale(rating)
             bookid += 1
-        prefs[user] = new_ratings
-        odd = 1
+        if valid == 1:
+            testPrefs[userid] = testRatings
+        prefs[userid] = allRatings
+        userid += 1
+        index += 1
+    return testPrefs,prefs,users,books
+
+def predict(prefs, userid, bookid, neighbours):
+    sumSim = 0
+    for sim, uid in neighbours:
+        sumSim += sim
+    weight = {}
+    rating = 0
+    for sim, uid in neighbours:
+        weight[uid] = sim/sumSim
+        if bookid in prefs[uid].keys():
+            if prefs[uid][bookid] != -1:
+                rating += prefs[uid][bookid] * weight[uid]
+    return rating
+
+def generateTrainPrefs(prefs, userid, items):
+    for key in items.keys():
+        prefs[userid][key] = 0
     return prefs
 
+def rmse(predictRatings, realRatings):
+    predictRatingList = []
+    for userid, item in predictRatings.items():
+        for itemid, value in item.items():
+            predictRatingList.append(value)
+
+    realRatingList = []
+    for userid, item in realRatings.items():
+        for itemid, value in item.items():
+            realRatingList.append(value)
+    print zip(predictRatingList, realRatingList)
+    return sqrt(sum([(f - o) ** 2 for f, o in zip(predictRatingList, realRatingList)]) / len(predictRatingList))
+
+
 if __name__ == '__main__':
-    prefs = loadDataset("")
-    print getNeighbours(prefs, "Ben")
-    # similarity(prefs, "Ben", "Reuven")
+    testPrefs,prefs,users,books = loadDataset("")
+    rating = {}
+    for userid in testPrefs.keys():
+        trainPrefs = generateTrainPrefs(prefs, userid, testPrefs[userid])
+        neighbours = getNeighbours(trainPrefs, userid, 20)
+        rating.setdefault(userid, {})
+        for bookid in testPrefs[userid].keys():
+            rating[userid][bookid] = predict(trainPrefs, userid, bookid, neighbours)
+    
+    print rmse(rating, testPrefs)
+    
+    
