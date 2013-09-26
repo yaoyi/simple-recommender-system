@@ -1,202 +1,274 @@
-import codecs 
 from math import sqrt
+import copy
 
-users = {"Angelica": {"Blues Traveler": 3.5, "Broken Bells": 2.0, "Norah Jones": 4.5, "Phoenix": 5.0, "Slightly Stoopid": 1.5, "The Strokes": 2.5, "Vampire Weekend": 2.0},
-         "Bill":{"Blues Traveler": 2.0, "Broken Bells": 3.5, "Deadmau5": 4.0, "Phoenix": 2.0, "Slightly Stoopid": 3.5, "Vampire Weekend": 3.0},
-         "Chan": {"Blues Traveler": 5.0, "Broken Bells": 1.0, "Deadmau5": 1.0, "Norah Jones": 3.0, "Phoenix": 5, "Slightly Stoopid": 1.0},
-         "Dan": {"Blues Traveler": 3.0, "Broken Bells": 4.0, "Deadmau5": 4.5, "Phoenix": 3.0, "Slightly Stoopid": 4.5, "The Strokes": 4.0, "Vampire Weekend": 2.0},
-         "Hailey": {"Broken Bells": 4.0, "Deadmau5": 1.0, "Norah Jones": 4.0, "The Strokes": 4.0, "Vampire Weekend": 1.0},
-         "Jordyn":  {"Broken Bells": 4.5, "Deadmau5": 4.0, "Norah Jones": 5.0, "Phoenix": 5.0, "Slightly Stoopid": 4.5, "The Strokes": 4.0, "Vampire Weekend": 4.0},
-         "Sam": {"Blues Traveler": 5.0, "Broken Bells": 2.0, "Norah Jones": 3.0, "Phoenix": 5.0, "Slightly Stoopid": 4.0, "The Strokes": 5.0},
-         "Veronica": {"Blues Traveler": 3.0, "Norah Jones": 5.0, "Phoenix": 4.0, "Slightly Stoopid": 2.5, "The Strokes": 3.0}
-        }
+"""
+@desc get the neighbours of a user
+@param  prefs user-item matrix
+        userid id of a user
+        bookid id of a book
+        n number of neighbours
+@return neighbours list
+"""
+def getNeighbours(prefs,userid,bookid, n=5):
+    orgscores = [(similarity(prefs,userid,other),other)
+                for other in prefs if other != userid]
+    # remove neighbours which do not have read the books[bookid]
+    scores = {}
+    for sim, userid in orgscores:
+        if bookid in prefs[userid].keys():
+            scores[userid] = sim
+    # sort the neighbours by similarity
+    scores = sorted(scores.items(), key=lambda d:d[1])
+    scores.reverse()
+    return scores[0:n]
 
+"""
+@desc calculate the similarity by Pearson correlation coefficient
+@param  prefs user-item matrix
+        p1 userid`
+        p1 the other userid
+@return similarity value
+"""
+def similarity(prefs,p1,p2):
+    #Get the list of mutually rated items
+    si = {}
+    for item in prefs[p1]:
+        if item in prefs[p2]: 
+            si[item] = 1
 
+    #if they are no rating in common, return 0
+    if len(si) == 0:
+        return 0
 
-class recommender:
+    #sum calculations
+    n = len(si)
 
-    def __init__(self, data, k=1, metric='pearson', n=5):
-        """ initialize recommender
-        currently, if data is dictionary the recommender is initialized to it.
-        For all other data types of data, no initialization occurs
-        k is the k value for k nearest neighbor
-        metric is which distance formula to use
-        n is the maximum number of recommendations to make"""
-        self.k = k
-        self.n = n
-        self.username2id = {}
-        self.userid2name = {}
-        self.productid2name = {}
-        # for some reason I want to save the name of the metric
-        self.metric = metric
-        if self.metric == 'pearson':
-            self.fn = self.pearson
-        #
-        # if data is dictionary set recommender data to it
-        #
-        if type(data).__name__ == 'dict':
-            self.data = data
+    #sum of all preferences
+    sum1 = sum([prefs[p1][it] for it in si])
+    sum2 = sum([prefs[p2][it] for it in si])
 
-    def convertProductID2name(self, id):
-        """Given product id number return product name"""
-        if id in self.productid2name:
-            return self.productid2name[id]
-        else:
-            return id
+    #Sum of the squares
+    sum1Sq = sum([pow(prefs[p1][it],2) for it in si])
+    sum2Sq = sum([pow(prefs[p2][it],2) for it in si])
 
+    #Sum of the products
+    pSum = sum([prefs[p1][it] * prefs[p2][it] for it in si])
 
-    def userRatings(self, id, n):
-        """Return n top ratings for user with id"""
-        print ("Ratings for " + self.userid2name[id])
-        ratings = self.data[id]
-        print(len(ratings))
-        ratings = list(ratings.items())
-        ratings = [(self.convertProductID2name(k), v) for (k, v) in ratings]
-        # finally sort and return
-        ratings.sort(key=lambda artistTuple: artistTuple[1], reverse = True)
-        ratings = ratings[:n]
+    #Calculate r (Pearson score)
+    num = pSum - (sum1 * sum2/n)
+    den = sqrt((sum1Sq - pow(sum1,2)/n) * (sum2Sq - pow(sum2,2)/n))
+
+    if den == 0:
+        return 0
+    r = num/den
+
+    # if r is negative, make it 0
+    if r < 0:
+        r = 0
+    return r
+
+"""
+@desc convert the rating scale
+@param rating rating value
+@return rating value in new scale
+"""
+def convertScale(rating):
+    scale = {
+        '0': -1,
+        '-5': 0.00,
+        '-3': 0.25,
+        '1': 0.50,
+        '3': 0.75,
+        '5': 1.00,
+    }
+    return scale[rating]
+
+"""
+@desc load the data file
+@param path dir path of the datafile
+return  testPrefs test dataset dict
+        prefs dataset dict
+        users user list
+        books book list
+"""
+def loadDataset(path=""):
+    # load the books info
+    books = []
+    for line in open(path+"books_list.txt"):
+        line  = line.strip('\n').strip()
+        books.append(line)
+    # load the user book rating
+    testPrefs = {}
+    prefs = {}
+    users = []
+    index = 1
+    userid = 0
+    for line in open(path+"books_ratings.txt"):
+        line  = line.strip('\n').strip()
+        # odd lines are usernames
+        if index % 2 == 1:
+            users.append(line)
+            index += 1
+            continue 
+        # even lines are ratings
+        ratings = line.split(" ")
+        testRatings = {}
+        allRatings = {}
+        count = 0
+        bookid = 0
+        valid = 0
         for rating in ratings:
-            print("%s\t%i" % (rating[0], rating[1]))
-        
-
-        
-
-    def loadBookDB(self, path=''):
-        """loads the BX book dataset. Path is where the BX files are located"""
-        self.data = {}
-        i = 0
-        #
-        # First load book ratings into self.data
-        #
-        f = codecs.open(path + "BX-Book-Ratings.csv", 'r', 'utf8')
-        for line in f:
-            i += 1
-            #separate line into fields
-            fields = line.split(';')
-            user = fields[0].strip('"')
-            book = fields[1].strip('"')
-            rating = int(fields[2].strip().strip('"'))
-            if user in self.data:
-                currentRatings = self.data[user]
+            # use two points with smallest IDs as test dataset
+            if rating != '0' and count < 2:
+                testRatings[bookid] = convertScale(rating)
+                allRatings[bookid] = convertScale(rating)
+                count += 1
             else:
-                currentRatings = {}
-            currentRatings[book] = rating
-            self.data[user] = currentRatings
-        f.close()
-        #
-        # Now load books into self.productid2name
-        # Books contains isbn, title, and author among other fields
-        #
-        f = codecs.open(path + "BX-Books.csv", 'r', 'utf8')
-        for line in f:
-            i += 1
-            #separate line into fields
-            fields = line.split(';')
-            isbn = fields[0].strip('"')
-            title = fields[1].strip('"')
-            author = fields[2].strip().strip('"')
-            title = title + ' by ' + author
-            self.productid2name[isbn] = title
-        f.close()
-        #
-        #  Now load user info into both self.userid2name and self.username2id
-        #
-        f = codecs.open(path + "BX-Users.csv", 'r', 'utf8')
-        for line in f:
-            i += 1
-            #print(line)
-            #separate line into fields
-            fields = line.split(';')
-            userid = fields[0].strip('"')
-            location = fields[1].strip('"')
-            if len(fields) > 3:
-                age = fields[2].strip().strip('"')
-            else:
-                age = 'NULL'
-            if age != 'NULL':
-                value = location + '  (age: ' + age + ')'
-            else:
-                value = location
-            self.userid2name[userid] = value
-            self.username2id[location] = userid
-        f.close()
-        print(i)
-                
-        
-    def pearson(self, rating1, rating2):
-        sum_xy = 0
-        sum_x = 0
-        sum_y = 0
-        sum_x2 = 0
-        sum_y2 = 0
-        n = 0
-        for key in rating1:
-            if key in rating2:
-                n += 1
-                x = rating1[key]
-                y = rating2[key]
-                sum_xy += x * y
-                sum_x += x
-                sum_y += y
-                sum_x2 += pow(x, 2)
-                sum_y2 += pow(y, 2)
-        if n == 0:
-            return 0
-        # now compute denominator
-        denominator = sqrt(sum_x2 - pow(sum_x, 2) / n) * sqrt(sum_y2 - pow(sum_y, 2) / n)
-        if denominator == 0:
-            return 0
-        else:
-            return (sum_xy - (sum_x * sum_y) / n) / denominator
+                if rating != '0':
+                    valid = 1
+                    allRatings[bookid] = convertScale(rating)
+            bookid += 1
+        if valid == 1:
+            testPrefs[userid] = testRatings
+        # user book rating, delete the ratings of books that user have never read
+        prefs[userid] = allRatings
+        userid += 1
+        index += 1
+    return testPrefs,prefs,users,books
+
+"""
+@desc: predict the rating possibly given by a user
+@param: prefs  user-item matrix
+        userid  id of a user
+        bookid id of a book
+        neighbours top N nearest to user[userid]
+@return rating value
+"""
+def predict(prefs, userid, bookid, neighbours):
+    sumSim = 0
+    for uid, sim in neighbours:
+        sumSim += sim
+    if sumSim == 0:
+        return -1
+    weight = {}
+    rating = 0
+    for uid, sim in neighbours:
+        weight[uid] = sim/sumSim
+        if bookid in prefs[uid].keys():
+            if prefs[uid][bookid] != -1:
+                rating += prefs[uid][bookid] * weight[uid]
+    return rating
+"""
+@desc: remove user[userid]'s ratings of two books 
+in prefs to generate train preferences
+@param: prefs user-items matrix
+        userid id of a user
+        items items to be removed
+@return: train dataset dict
+"""
+def generateTrainPrefs(prefs, userid, items):
+    trainPrefs = copy.deepcopy(prefs)
+    for key in items.keys():
+        trainPrefs[userid].pop(key)
+    return trainPrefs
+
+"""
+calculate root mean square error
+@param  predictRatings predict ratings dict
+        realRatings   test ratings dict
+@return rmse value
+"""
+def rmse(predictRatings, realRatings):
+    predictRatingList = []
+    for userid, items in predictRatings.items():
+        for itemid, value in items.items():
+            predictRatingList.append(value)
+
+    realRatingList = []
+    for userid, items in realRatings.items():
+        for itemid, value in items.items():
+            realRatingList.append(value)
+    # print zip(predictRatingList, realRatingList)
+    return sqrt(sum([(f - o) ** 2 for f, o in zip(predictRatingList, realRatingList)]) / len(predictRatingList))
 
 
-    def computeNearestNeighbor(self, username):
-        """creates a sorted list of users based on their distance to username"""
-        distances = []
-        for instance in self.data:
-            if instance != username:
-                distance = self.fn(self.data[username], self.data[instance])
-                distances.append((instance, distance))
-        # sort based on distance -- closest first
-        distances.sort(key=lambda artistTuple: artistTuple[1], reverse=True)
-        return distances
+"""
+@desc evaluation by mean method
+@param  testPrefs test dataset
+        prefs  complete dataset
+"""
+def evaluation_mean(testPrefs, prefs):
+    rating = {}
+    ratings = {}
+    count = {}
 
-    def recommend(self, user):
-        """Give list of recommendations"""
-        recommendations = {}
-        # first get list of users  ordered by nearness
-        nearest = self.computeNearestNeighbor(user)
-        #
-        # now get the ratings for the user
-        #
-        userRatings = self.data[user]
-        #
-        # determine the total distance
-        totalDistance = 0.0
-        for i in range(self.k):
-            totalDistance += nearest[i][1]
-        # now iterate through the k nearest neighbors
-        # accumulating their ratings
-        for i in range(self.k):
-            # compute slice of pie 
-            weight = nearest[i][1] / totalDistance
-            # get the name of the person
-            name = nearest[i][0]
-            # get the ratings for this person
-            neighborRatings = self.data[name]
-            # get the name of the person
-            # now find bands neighbor rated that user didn't
-            for artist in neighborRatings:
-                if not artist in userRatings:
-                    if artist not in recommendations:
-                        recommendations[artist] = neighborRatings[artist] * weight
-                    else:
-                        recommendations[artist] = recommendations[artist] + neighborRatings[artist] * weight
-        # now make list from dictionary
-        recommendations = list(recommendations.items())
-        recommendations = [(self.convertProductID2name(k), v) for (k, v) in recommendations]
-        # finally sort and return
-        recommendations.sort(key=lambda artistTuple: artistTuple[1], reverse = True)
-        # Return the first n items
-        return recommendations[:self.n]
+    # initialize rating, count to 0
+    for (userid, items) in testPrefs.items():
+        rating.setdefault(userid, {})
+        count.setdefault(userid, {})
+        for (bookid, value) in items.items():
+            rating[userid][bookid] = 0
+            count[userid][bookid] = 0
 
+    # add others' ratings on each book in test dataset
+    for testUserid in testPrefs.keys():
+        rating.setdefault(testUserid, {})
+        for (userid, items) in prefs.items():
+            # not oneself
+            if userid == testUserid:
+                continue
+            for (bookid,value) in items.items():
+                if bookid in rating[testUserid].keys() and value != -1:
+                    # sum rating of a book from others
+                    rating[testUserid][bookid] += value
+                    # sum count of a book from others
+                    count[testUserid][bookid] += 1
+    for testUserid in testPrefs.keys():
+        for bookid in rating[testUserid].keys():
+            # mean rating of a book from others
+            rating[testUserid][bookid] = rating[testUserid][bookid]/count[testUserid][bookid]
+        ratings[testUserid] = rating[testUserid]
+            
+    return rmse(ratings, testPrefs)
+
+"""
+@desc evaluation by collaborative filtering method
+@param  testPrefs test dataset
+        prefs  complete dataset
+        neighbour_num number of neighbours
+"""
+def evaluation_cf(testPrefs, prefs, neighbour_num = 5):
+    ratings = {}
+    missUser = []
+    validTestPrefs = {}
+    for userid in testPrefs.keys():
+        trainPrefs = generateTrainPrefs(prefs, userid, testPrefs[userid])
+        ratings.setdefault(userid, {})
+        for bookid in testPrefs[userid].keys():
+            neighbours = getNeighbours(trainPrefs, userid, bookid, neighbour_num)
+            ratings[userid][bookid] = predict(trainPrefs, userid, bookid, neighbours)
+            """
+            some users might always get 0 similarity
+            in this case, they cannot get prediction
+            """
+            if ratings[userid][bookid] == -1:
+                ratings.pop(userid)
+                missUser.append(userid)
+                break
+        validTestPrefs[userid] = testPrefs[userid]
+    return rmse(ratings, validTestPrefs)
+
+if __name__ == '__main__':
+    testPrefs,prefs,users,_ = loadDataset("")
+    print evaluation_mean(testPrefs, prefs)
+    print evaluation_cf(testPrefs, prefs, 5);
+    print evaluation_cf(testPrefs, prefs, 10);
+    
+"""
+RMSE for MEAN method: 0.287120678495
+RMSE for CF(5) method: 0.328335900317
+RMSE for CF(10) method: 0.323508363794
+"""
+    
+    
+    
